@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPERADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum StockMovementType {
+  SALE_DEDUCTION
+  MANUAL_RESTOCK
+  INVENTORY_ADJUSTMENT
+}
+
+model Profile {
+  id                  String   @id @default(uuid())
+  name                String   @unique
+  description         String?
+  canCatalog          Boolean  @default(false)
+  canOrders           Boolean  @default(false)
+  canValidatePayments Boolean  @default(false)
+  canKardex           Boolean  @default(false)
+  canUsers            Boolean  @default(false)
+  canErpExport        Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  users               User[]
+}
+
+model User {
+  id            String          @id @default(uuid())
+  name          String?
+  email         String          @unique
+  password      String?         // Hash bcryptjs para ADMIN y SUPERADMIN
+  phone         String?
+  emailVerified DateTime?
+  image         String?
+  role          Role            @default(CUSTOMER)
+  profileId     String?
+  profile       Profile?        @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  orders        Order[]
+  auditLogs     AdminAuditLog[]
+}
+
+model Product {
+  id              String          @id @default(uuid())
+  name            String
+  brand           String
+  slug            String          @unique
+  concentration   String          // e.g., "Extrait de Parfum", "Eau de Parfum", "Elixir"
+  olfactiveFamily String          // e.g., "Oriental Oud", "Floral Précieux", "Boisé & Cuir"
+  description     String
+  retailPrice     Float           @default(0) // Precio de lista original
+  discountPrice   Float?          // Precio promocional con descuento
+  price           Float           // Precio final efectivo de venta
+  stock           Int             @default(0)
+  sku             String          @unique
+  image           String          // Imagen de portada
+  volumeMl        Int             @default(100)
+  notesTop        String          // Comma-separated top notes
+  notesHeart      String          // Comma-separated heart notes
+  notesBase       String          // Comma-separated base notes
+  longevity       String          @default("12+ Horas")
+  sillage         String          @default("Intenso / Majestuoso")
+  isFeatured      Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  orderItems      OrderItem[]
+  stockMovements  StockMovement[]
+  images          ProductImage[]
+}
+
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String   // URL web relativa (ej: /images/perfumes/oud-royal.jpg o /uploads/...)
+  localPath String?  // Ruta física en disco C: (ej: C:\ecom-storage\uploads\...)
+  blobData  String?  // Opcional Base64 Data URL para respaldo directo
+  isPrimary Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id                 String          @id @default(uuid())
+  orderNumber        String          @unique
+  customerName       String
+  customerEmail      String
+  customerPhone      String
+  shippingAddress    String
+  shippingCity       String
+  totalAmount        Float
+  discountAmount     Float           @default(0)
+  currency           String          @default("USD")
+  status             OrderStatus     @default(PENDING)
+  paymentStatus      String          @default("PENDING_VALIDATION") // PENDING_VALIDATION, VALIDATED, REJECTED
+  paymentValidatedBy String?         // Admin que validó el pago
+  paymentValidatedAt DateTime?       // Fecha/hora de validación
+  paymentMethod      String          @default("TRANSFERENCIA") // TRANSFERENCIA, YAPE_PLIN, COORDINAR_WSP
+  paymentReference   String?
+  customerNotes      String?
+  stockDeducted      Boolean         @default(false) // NO descuenta stock hasta que se valide el pago
+  erpExported        Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  userId             String?
+  user               User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items              OrderItem[]
+  stockMovements     StockMovement[]
+}
+
+model OrderItem {
+  id                   String   @id @default(uuid())
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId            String?
+  product              Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName          String
+  productBrand         String
+  productConcentration String
+  price                Float
+  quantity             Int
+  subtotal             Float
+  productImage         String
+}
+
+model StockMovement {
+  id             String            @id @default(uuid())
+  productId      String
+  product        Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type           StockMovementType
+  inQuantity     Int               @default(0) // Unidades que entraron
+  outQuantity    Int               @default(0) // Unidades que salieron
+  changeQuantity Int               // Delta neto (+ o -)
+  previousStock  Int               // Saldo previo
+  balance        Int               @default(0) // Saldo Kardex calculado resultante
+  newStock       Int               // Saldo actual posterior
+  orderId        String?
+  order          Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  reference      String?           // N° Pedido, N° Factura Proveedor, N° Lote
+  user           String?           // Usuario que autorizó / ejecutó
+  note           String?
+  createdAt      DateTime          @default(now())
+}
+
+model AdminAuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // ROLE_CHANGE, CREATE_ADMIN, STOCK_ADJUSTMENT, MANUAL_ORDER, VALIDATE_PAYMENT, PROFILE_CHANGE
+  resource  String
+  details   String?
+  createdAt DateTime @default(now())
+}
